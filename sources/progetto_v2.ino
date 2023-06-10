@@ -5,7 +5,7 @@ TODO: water level sensor
       --> migliorare la normalizzazione dei valori
       --> migliorare la calibrazione
 TODO: migliorare il treshold del "manca acqua"
-TODO: MQTT
+TODO: migliorare MQTT
 TODO: breadboard power supply + 9V battery
 TODO: commentare per bene il codice
 */
@@ -17,12 +17,34 @@ TODO: commentare per bene il codice
     Licenza:  GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
 */
 
+#include "Credentials.h"
 #include "DHT.h"
 #include "AiEsp32RotaryEncoder.h"
 #include "TaskScheduler.h"
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <PubSubClientTools.h>
+
+// WIFI + mqtt setup (vedi Credentials.h)
+const String ssid = WIFI_SSID;
+const String pass = WIFI_PASSWORD;
+WiFiClient espClient;
+PubSubClient client(MQTT_SERVER, 1883, espClient);
+PubSubClientTools mqtt(client);
+
+// topic mqtt
+String ID = "UmidificatoreSmartCass";
+const char *DHT11_TEMP = "UmidificatoreSmartCass/dht11/temp";
+const char *DHT11_HUM = "UmidificatoreSmartCass/dht11/hum";
+const char *DHT11_HIC = "UmidificatoreSmartCass/dht11/hic";
+const char *WATER_LEVEL = "UmidificatoreSmartCass/waterLevel";
+const char *ATOMIZER = "UmidificatoreSmartCass/atomizer";
+const char* MODALITA = "UmidificatoreSmartCass/modalita";
+const char *TRESHOLD = "UmidificatoreSmartCass/treshold";
+const char *INTERMIT_TIME = "UmidificatoreSmartCass/intermitTime";
 
 #define DHTTYPE DHT11
 #define DHTPIN 14
@@ -44,6 +66,7 @@ TODO: commentare per bene il codice
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1); // oled ssd1306 128x64
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN, ROTARY_ENCODER_STEPS);
+
 DHT dht(DHTPIN, DHTTYPE);
 Scheduler ts;
 
@@ -78,7 +101,10 @@ void rotary_onButtonClick() {
       display.setCursor(0, 0);
       display.println("Modalita' Automatica.");
       display.display();
+      mqtt.publish(MODALITA, "Automatico");
     } else if (Mode == 2) {
+      atomizza(LOW);
+      mqtt.publish(MODALITA, "Intermittenza");
       Serial.println("Modalita' Intermittenza.");
       display.clearDisplay();
       display.setCursor(0, 0);
@@ -90,6 +116,8 @@ void rotary_onButtonClick() {
       display.setCursor(0, 0);
       display.println("Umidificatore Spento.");
       display.display();
+      atomizza(LOW);
+      mqtt.publish(MODALITA, "Spento");
     }
 
     digitalWrite(RED,LOW);
@@ -126,6 +154,7 @@ void rotary_loop() {
     display.println(F("C"));
     display.setTextSize(1);
     display.display();
+    mqtt.publish(TRESHOLD, String(temp_treshold).c_str());
   } else if (Mode == 2) {        // altrimenti modifico il delay dell'intermittenza
     encoderDelta = rotaryEncoder.encoderChanged();
     if (encoderDelta == 0) {
@@ -160,6 +189,12 @@ void rotary_loop() {
     display.println(seconds);
     display.setTextSize(1);
     display.display(); 
+
+    String timeStr = "";
+    timeStr += minutes;
+    timeStr += ":";
+    timeStr += seconds;
+    mqtt.publish(INTERMIT_TIME, timeStr);
     
     digitalWrite(RED,LOW);        // ogni volta che cambio il delay spengo il 'led'
   }
@@ -170,17 +205,18 @@ void IRAM_ATTR readEncoderISR() {
 }
 
 // TASKS
-Task checkDHT11Sensors(29 * TASK_SECOND, TASK_FOREVER, &dht11Sensors);
-Task checkWaterLevelSensor(25 * TASK_SECOND, TASK_FOREVER, &activateWaterSensorPower);
-Task printSensorsValues(30 * TASK_SECOND, TASK_FOREVER, &printSensors);
-Task printDisplaySensors(30 * TASK_SECOND, TASK_FOREVER, &displaySensors);
+Task checkDHT11Sensors(13 * TASK_SECOND, TASK_FOREVER, &dht11Sensors);
+Task checkWaterLevelSensor(13 * TASK_SECOND, TASK_FOREVER, &activateWaterSensorPower);
+Task printSensorsValues(15 * TASK_SECOND, TASK_FOREVER, &printSensors);
+Task printDisplaySensors(15 * TASK_SECOND, TASK_FOREVER, &displaySensors);
 Task atomizer(TASK_IMMEDIATE, TASK_FOREVER, &atomize);
+//Task keepAlive(14 * TASK_SECOND, TASK_FOREVER, &keepAliveMqtt);
 
 void dht11Sensors() {
   if (Mode == 0)
     return;
 
-  Serial.println("Checking DHT11 sensor...");
+  //Serial.println("Checking DHT11 sensor...");
   
   h = dht.readHumidity();
   t = dht.readTemperature();
@@ -281,47 +317,94 @@ void printSensors() {
   // water level sensor
   Serial.print("Water level: ");
   Serial.println(waterLevelY);
+
+  // invio mqtt
+  mqtt.publish(DHT11_TEMP, String(t).c_str());
+  mqtt.publish(DHT11_HUM, String(h).c_str());
+  mqtt.publish(DHT11_HIC, String(hic).c_str());
+  mqtt.publish(WATER_LEVEL, String(waterLevelY).c_str());
 }
 
-void intermit() {   
+void intermit() {  
   unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= millisIntermittenza) {
-    if (atomizerState == LOW) {
-      atomizerState = HIGH;
-    } else {
-      atomizerState = LOW;
-    }
-
-    digitalWrite(RED,atomizerState);
-    digitalWrite(ATOMIZER_EN,atomizerState);
   
+  if (previousMillis == 0)
+    previousMillis = currentMillis;
+  
+  if (currentMillis - previousMillis >= millisIntermittenza) {
+    atomizza(!atomizerState);  
     previousMillis = currentMillis;
   }
 }
 
+void atomizza (int state) {
+  if (state == HIGH && atomizerState == LOW) {
+      atomizerState = HIGH;
+      digitalWrite(RED, atomizerState);
+      digitalWrite(ATOMIZER_EN, atomizerState);
+      mqtt.publish(ATOMIZER, "Atomizzatore attivo");
+  } else if (state == LOW && atomizerState == HIGH) {
+      atomizerState = LOW;
+      digitalWrite(RED, atomizerState);
+      digitalWrite(ATOMIZER_EN, atomizerState);
+      mqtt.publish(ATOMIZER, "Atomizzatore spento");
+  }
+}
+
 void atomize() {
-  if (waterLevelY <= 40) {
+  /*if (waterLevelY <= 40) {
     Serial.println("Livello acqua troppo basso (waterLevelY).");
     digitalWrite(RED, LOW);
     digitalWrite(ATOMIZER_EN, LOW);
     return;
-  }
+  }*/
   
   if (Mode == 1) {    
     if (t >= temp_treshold) {
-      digitalWrite(RED, HIGH);
-      digitalWrite(ATOMIZER_EN, HIGH);
+      atomizza(HIGH);
     } else {
-      digitalWrite(RED, LOW);
-      digitalWrite(ATOMIZER_EN, LOW);
+      atomizza(LOW);
     }
   } else if (Mode == 2) {
     intermit();
   }
 }
 
+void setupWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), pass.c_str());
+
+  Serial.print("Connecting...");
+  while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+  }
+  Serial.println();
+
+  Serial.print("Connected, IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void setupMQTT() {
+  // Connect to MQTT
+  Serial.print("Connecting to MQTT: "+String(MQTT_SERVER)+" ... ");
+  if (client.connect(ID.c_str())) {
+      Serial.println("connected");
+      mqtt.publish(MODALITA, "Spento");
+  } else {
+      Serial.println("Failed, rc="+client.state());
+  }
+}
+
+/*void keepAliveMqtt() {
+  mqtt.publish("UmidificatoreSmartCass/keepAlive", "sono ancora qui");
+}*/
+
 void setup() {
   Serial.begin(115200);
+
+  setupWifi();
+  setupMQTT();
 
   // Rotary encoder setup
   rotaryEncoder.begin();
@@ -333,9 +416,17 @@ void setup() {
   rotaryEncoder.disableAcceleration(); //acceleration is now enabled by default - disable if you dont need it
   //rotaryEncoder.setAcceleration(250); //or set the value - larger number = more accelearation; 0 or 1 means disabled acceleration
 
+  // dht11 setup
+  dht.begin();
+
   // water level sensor setup
   pinMode(waterSensorPower,OUTPUT);
   digitalWrite(waterSensorPower,LOW);
+
+  // atomizer setup
+  pinMode(RED,OUTPUT);
+  pinMode(ATOMIZER_EN,OUTPUT);
+  digitalWrite(ATOMIZER_EN,atomizerState); 
   
   // Oled setup
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -348,21 +439,19 @@ void setup() {
   display.print("Umidificatore spento.");
   display.display();
 
-  pinMode(RED,OUTPUT);
-  pinMode(ATOMIZER_EN,OUTPUT);
-  digitalWrite(ATOMIZER_EN,LOW); 
-  
-  dht.begin();
+  // adding/enabling tasks
   ts.addTask(checkDHT11Sensors);
   ts.addTask(checkWaterLevelSensor);
   ts.addTask(printSensorsValues);
   ts.addTask(printDisplaySensors);
   ts.addTask(atomizer);
+  //ts.addTask(keepAlive);
   checkDHT11Sensors.enable();
   checkWaterLevelSensor.enable();
   printSensorsValues.enable();
   printDisplaySensors.enable();
   atomizer.enable();
+  //keepAlive.enable();
 }
 
 void loop() {
