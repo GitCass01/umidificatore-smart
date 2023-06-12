@@ -1,20 +1,19 @@
 /*
-TODO: migliorare la modalità spento, ora non è una vera modalità spenta, nel senso che continua a fare i task
-      soluzione: si dovrebbe spegnere proprio l'alimentazione, oppure abilitare/disabilitare dinamicamente i task
-TODO: water level sensor
-      --> migliorare la normalizzazione dei valori
-      --> migliorare la calibrazione
-TODO: migliorare il treshold del "manca acqua"
-TODO: migliorare MQTT
-TODO: breadboard power supply + 9V battery
-TODO: commentare per bene il codice
+  TODO: migliorare la modalità spento, ora non è una vera modalità spenta, nel senso che continua a fare i task
+        soluzione: si dovrebbe spegnere proprio l'alimentazione, oppure abilitare/disabilitare dinamicamente i task
+  TODO: water level sensor
+        --> migliorare la normalizzazione dei valori
+        --> migliorare la calibrazione
+  TODO: migliorare il treshold del "manca acqua"
+  TODO: accettare dei comandi da MQTT???????
+  TODO: breadboard power supply + 9V battery
 */
 
 /*
-    Autore:   Davide Carniselli
-    Github:   https://github.com/GitCass01
-    Progetto: Umidificatore Smart
-    Licenza:  GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
+ * Autore:   Davide Carniselli
+ * Github:   https://github.com/GitCass01
+ * Progetto: Umidificatore Smart
+ * Licenza:  GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
 */
 
 #include "Credentials.h"
@@ -28,7 +27,7 @@ TODO: commentare per bene il codice
 #include <PubSubClient.h>
 #include <PubSubClientTools.h>
 
-// WIFI + mqtt setup (vedi Credentials.h)
+// WIFI + mqtt setup (vedi Credentials.h per credenziali)
 const String ssid = WIFI_SSID;
 const String pass = WIFI_PASSWORD;
 WiFiClient espClient;
@@ -37,8 +36,8 @@ PubSubClientTools mqtt(client);
 
 // topic mqtt
 String ID = "UmidificatoreSmartCass";
-const char *DHT11_TEMP = "UmidificatoreSmartCass/dht11/temp";
-const char *DHT11_HUM = "UmidificatoreSmartCass/dht11/hum";
+const char *DHT11_TEMP = "UmidificatoreSmartCass/dht11/temperature";
+const char *DHT11_HUM = "UmidificatoreSmartCass/dht11/humidity";
 const char *DHT11_HIC = "UmidificatoreSmartCass/dht11/hic";
 const char *WATER_LEVEL = "UmidificatoreSmartCass/waterLevel";
 const char *ATOMIZER = "UmidificatoreSmartCass/atomizer";
@@ -49,16 +48,16 @@ const char *INTERMIT_TIME = "UmidificatoreSmartCass/intermitTime";
 #define DHTTYPE DHT11
 #define DHTPIN 14
 #define RED 32                          // led informativo per capire quando sta/dovrebbe atomizzare l'acqua
-#define waterSensorPower 27
+#define waterSensorPower 27             // pin per dare corrente al water sensor solo quando necessario, per evitare corrosione rapida del sensore
 #define waterSensorOutput 34
 #define WATER_NIL 0                     // valore del water sensor non in acqua
 #define WATER_MIN 205                   // valore del water sensor con acqua minima
 #define WATER_MID 260                   // valore del water sensor con acqua a metà
 #define WATER_MAX 275                   // valore del water sensor completamente immerso
 #define ATOMIZER_EN 14                  // pin per abilitare l'atomizzatore
-#define ROTARY_ENCODER_A_PIN 33
-#define ROTARY_ENCODER_B_PIN 25
-#define ROTARY_ENCODER_BUTTON_PIN 26
+#define ROTARY_ENCODER_A_PIN 33         // clk pin
+#define ROTARY_ENCODER_B_PIN 25         // dt pin
+#define ROTARY_ENCODER_BUTTON_PIN 26    // button pin
 #define ROTARY_ENCODER_VCC_PIN -1
 #define ROTARY_ENCODER_STEPS 4
 #define SCREEN_WIDTH 128                // OLED display width, in pixels
@@ -70,22 +69,23 @@ AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, 
 DHT dht(DHTPIN, DHTTYPE);
 Scheduler ts;
 
-// Variabili gloabali
-
-int Mode = 0;
-float t = 0;
-float h = 0;
-float hic = 0;
+// Variabili globali
+int Mode = 0;                                 // modalità dell'umidificatore
+float temp = 0;                               // temperatura corrente
+float hum = 0;                                // umidità corrente
+float hic = 0;                                // heat index corrente
 float temp_treshold = 24.0;
 unsigned long previousMillis = 0;
-unsigned long millisIntermittenza = 30000;    // delay di atomizzazione (normalmente è più alto, ma può essere cambiato dall'utente tramite rotary encoder)
+unsigned long millisIntermittenza = 30000;    // delay di atomizzazione
 unsigned long seconds;
 unsigned long minutes;
 int waterLevelValue;                          // valore ottenuto dal water leve sensor compreso tra [WATER_MIN,WATER_MAX]
 int waterLevelY;                              // valore tra 0 e 127, ottenuto normalizzando waterLevelValue
-int atomizerState = LOW;                           // qui è un led, poi sarà il water atomizator
-//int waterLevelDisplayY2 = 127;                // 127 = pieno
+int atomizerState = LOW;                      // stato dell'atomizzatore corrente
 
+/*
+ * gestione del click button del rotary encoder
+*/
 void rotary_onButtonClick() {
     static unsigned long lastTimePressed = 0;
     if (millis() - lastTimePressed < 500) {
@@ -93,7 +93,7 @@ void rotary_onButtonClick() {
     }
     lastTimePressed = millis();
     
-    // gestione click bottone rotary encoder
+    // gestione cambio modalità umdificatore
     Mode = (Mode+1) % 3;
     if (Mode == 1) {
       Serial.println("Modalità Automatica.");
@@ -103,7 +103,6 @@ void rotary_onButtonClick() {
       display.display();
       mqtt.publish(MODALITA, "Automatico");
     } else if (Mode == 2) {
-      atomizza(LOW);
       mqtt.publish(MODALITA, "Intermittenza");
       Serial.println("Modalita' Intermittenza.");
       display.clearDisplay();
@@ -116,13 +115,16 @@ void rotary_onButtonClick() {
       display.setCursor(0, 0);
       display.println("Umidificatore Spento.");
       display.display();
-      atomizza(LOW);
       mqtt.publish(MODALITA, "Spento");
     }
 
     digitalWrite(RED,LOW);
+    atomizza(LOW);
 }
 
+/*
+ * funzione di gestione del rotary encorder
+*/
 void rotary_loop() {
   if (rotaryEncoder.isEncoderButtonClicked()) {
     rotary_onButtonClick();
@@ -130,7 +132,11 @@ void rotary_loop() {
 
   int encoderDelta;
 
-  if (Mode == 1) {     // se modalità automatica modifico il treshold
+  /* 
+   *  se la modalità corrente è automatica, allora la rotazione modifica il treshold
+   *  altrimenti, se la modalità è ad intermittenza, modifica il delay dell'atomizzazione
+  */
+  if (Mode == 1) {
     encoderDelta = rotaryEncoder.encoderChanged();
     if (encoderDelta == 0) {
       return;
@@ -155,13 +161,13 @@ void rotary_loop() {
     display.setTextSize(1);
     display.display();
     mqtt.publish(TRESHOLD, String(temp_treshold).c_str());
-  } else if (Mode == 2) {        // altrimenti modifico il delay dell'intermittenza
+  } else if (Mode == 2) {
     encoderDelta = rotaryEncoder.encoderChanged();
     if (encoderDelta == 0) {
       return;
     }
 
-    // girare il rotary significa aumentare/diminuire l'intermittenza di 30s
+    // girare il rotary significa aumentare/diminuire l'intermittenza di 15s
     if (encoderDelta > 0) {
       millisIntermittenza = millisIntermittenza + 15000;
     } else {
@@ -195,8 +201,10 @@ void rotary_loop() {
     timeStr += ":";
     timeStr += seconds;
     mqtt.publish(INTERMIT_TIME, timeStr);
-    
-    digitalWrite(RED,LOW);        // ogni volta che cambio il delay spengo il 'led'
+
+    // ogni volta che cambio il delay spengo l'atomizzazione
+    digitalWrite(RED,LOW);
+    atomizza(LOW);
   }
 }
 
@@ -210,27 +218,32 @@ Task checkWaterLevelSensor(13 * TASK_SECOND, TASK_FOREVER, &activateWaterSensorP
 Task printSensorsValues(15 * TASK_SECOND, TASK_FOREVER, &printSensors);
 Task printDisplaySensors(15 * TASK_SECOND, TASK_FOREVER, &displaySensors);
 Task atomizer(TASK_IMMEDIATE, TASK_FOREVER, &atomize);
-//Task keepAlive(14 * TASK_SECOND, TASK_FOREVER, &keepAliveMqtt);
 
+/*
+ * gestione del sensore DHT11 (temperatura ed umidità)
+*/
 void dht11Sensors() {
   if (Mode == 0)
     return;
 
   //Serial.println("Checking DHT11 sensor...");
   
-  h = dht.readHumidity();
-  t = dht.readTemperature();
+  hum = dht.readHumidity();
+  temp = dht.readTemperature();
 
   // controllo errori del dht, se ci sono esco per ripetere la lettura del sensore
-  if (isnan(h) || isnan(t)) {
+  if (isnan(hum) || isnan(temp)) {
     Serial.println(F("Failed to read from DHT sensor!"));
     return;
   }
 
   // Calcolo l'indice di calore (ovvero l'afa, causata da alte temperature e alta umidità)
-  hic = dht.computeHeatIndex(t, h, false);
+  hic = dht.computeHeatIndex(temp, hum, false);
 }
 
+/*
+ * attivazione del water level sensor
+*/
 void activateWaterSensorPower() {
   if (Mode == 0)
     return;
@@ -240,6 +253,9 @@ void activateWaterSensorPower() {
   checkWaterLevelSensor.delay(20);
 }
 
+/*
+ * lettura del water level sensor e normalizzazione del valore per stamparlo sull'oled
+*/
 void waterLevel() {
   waterLevelValue = analogRead(waterSensorOutput);
   digitalWrite(waterSensorPower, LOW);
@@ -261,6 +277,9 @@ void waterLevel() {
   checkWaterLevelSensor.setCallback(&activateWaterSensorPower);
 }
 
+/*
+ * visualizzazione dei valori dei sensori sull'oled
+*/
 void displaySensors() {
   if (Mode == 0)
     return;
@@ -268,11 +287,11 @@ void displaySensors() {
   display.clearDisplay();
   display.setCursor(0, 0);
   display.print(F("Humidity:      "));
-  display.print(h);
+  display.print(hum);
   display.println(F("%"));
   display.println();
   display.print(F("Temperature:   "));
-  display.print(t);
+  display.print(temp);
   display.println(F("C"));
   display.println();
   display.print(F("Heat Index:    "));
@@ -297,15 +316,18 @@ void displaySensors() {
   display.display(); 
 }
 
+/*
+ * visualizzazione dei sensori su Serial Monitor e su MQTT
+*/
 void printSensors() {
   if (Mode == 0)
     return;
 
   // DHT11
   Serial.print(F("Humidity: "));
-  Serial.print(h);
+  Serial.print(hum);
   Serial.print(F("%  Temperature: "));
-  Serial.print(t);
+  Serial.print(temp);
   Serial.print(F("°C "));
   Serial.print(F("  Heat Index: "));
   Serial.print(hic);
@@ -319,12 +341,15 @@ void printSensors() {
   Serial.println(waterLevelY);
 
   // invio mqtt
-  mqtt.publish(DHT11_TEMP, String(t).c_str());
-  mqtt.publish(DHT11_HUM, String(h).c_str());
+  mqtt.publish(DHT11_TEMP, String(temp).c_str());
+  mqtt.publish(DHT11_HUM, String(hum).c_str());
   mqtt.publish(DHT11_HIC, String(hic).c_str());
   mqtt.publish(WATER_LEVEL, String(waterLevelY).c_str());
 }
 
+/*
+ * gestione atomizzatore in modalità intermittenza
+*/
 void intermit() {  
   unsigned long currentMillis = millis();
   
@@ -337,6 +362,9 @@ void intermit() {
   }
 }
 
+/*
+ * attivazione/disattivazione atomizzatore
+*/
 void atomizza (int state) {
   if (state == HIGH && atomizerState == LOW) {
       atomizerState = HIGH;
@@ -351,6 +379,9 @@ void atomizza (int state) {
   }
 }
 
+/*
+ * gestione atomizzatore in base alla modalità e al livello del'acqua
+*/
 void atomize() {
   /*if (waterLevelY <= 40) {
     Serial.println("Livello acqua troppo basso (waterLevelY).");
@@ -360,7 +391,7 @@ void atomize() {
   }*/
   
   if (Mode == 1) {    
-    if (t >= temp_treshold) {
+    if (temp >= temp_treshold) {
       atomizza(HIGH);
     } else {
       atomizza(LOW);
@@ -370,6 +401,9 @@ void atomize() {
   }
 }
 
+/*
+ * connessione al WiFi
+*/
 void setupWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), pass.c_str());
@@ -385,6 +419,9 @@ void setupWifi() {
   Serial.println(WiFi.localIP());
 }
 
+/*
+ * connessione al server MQTT
+*/
 void setupMQTT() {
   // Connect to MQTT
   Serial.print("Connecting to MQTT: "+String(MQTT_SERVER)+" ... ");
@@ -396,10 +433,9 @@ void setupMQTT() {
   }
 }
 
-/*void keepAliveMqtt() {
-  mqtt.publish("UmidificatoreSmartCass/keepAlive", "sono ancora qui");
-}*/
-
+/*
+ * setup wifi, mqtt, sensori, oled, atomizzatore e scheduler
+*/
 void setup() {
   Serial.begin(115200);
 
@@ -409,12 +445,7 @@ void setup() {
   // Rotary encoder setup
   rotaryEncoder.begin();
   rotaryEncoder.setup(readEncoderISR);
-  //set boundaries and if values should cycle or not
-  //in this example we will set possible values between 0 and 1000;
-  //bool circleValues = false;
-  //rotaryEncoder.setBoundaries(0, 1000, circleValues); //minValue, maxValue, circleValues true|false (when max go to min and vice versa)
   rotaryEncoder.disableAcceleration(); //acceleration is now enabled by default - disable if you dont need it
-  //rotaryEncoder.setAcceleration(250); //or set the value - larger number = more accelearation; 0 or 1 means disabled acceleration
 
   // dht11 setup
   dht.begin();
@@ -451,7 +482,6 @@ void setup() {
   printSensorsValues.enable();
   printDisplaySensors.enable();
   atomizer.enable();
-  //keepAlive.enable();
 }
 
 void loop() {
