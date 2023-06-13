@@ -37,7 +37,7 @@ const char *DHT11_HUM = "UmidificatoreSmartCass/dht11/humidity";
 const char *DHT11_HIC = "UmidificatoreSmartCass/dht11/hic";
 const char *WATER_LEVEL = "UmidificatoreSmartCass/waterLevel";
 const char *ATOMIZER = "UmidificatoreSmartCass/atomizer";
-const char* MODALITA = "UmidificatoreSmartCass/modalita";
+const char *MODALITA = "UmidificatoreSmartCass/modalita";
 const char *TRESHOLD = "UmidificatoreSmartCass/treshold";
 const char *INTERMIT_TIME = "UmidificatoreSmartCass/intermitTime";
 
@@ -73,7 +73,7 @@ float hum = 0;                                // umidità corrente
 float hic = 0;                                // heat index corrente
 float hum_treshold = 70;
 unsigned long previousMillis = 0;
-unsigned long millisIntermittenza = 5000;    // delay di atomizzazione
+unsigned long millisIntermittenza = 30000;    // delay di atomizzazione
 unsigned long seconds;
 unsigned long minutes;
 int waterLevelValue;                          // valore ottenuto dal water leve sensor compreso tra [WATER_MIN,WATER_MAX]
@@ -96,7 +96,10 @@ void rotary_onButtonClick() {
       Serial.println("Modalità Automatica.");
       display.clearDisplay();
       display.setCursor(0, 0);
-      display.println("Modalita' Automatica.");
+      display.setTextSize(2);
+      display.println("Modalita'");
+      display.println("Automatica");
+      display.setTextSize(1);
       display.display();
       mqtt.publish(MODALITA, "Automatico");
     } else if (Mode == 2) {
@@ -104,18 +107,23 @@ void rotary_onButtonClick() {
       Serial.println("Modalita' Intermittenza.");
       display.clearDisplay();
       display.setCursor(0, 0);
-      display.println("Modalita' Intermittenza.");
+      display.setTextSize(2);
+      display.println("Modalita'");
+      display.println("Intermittenza");
+      display.setTextSize(1);
       display.display();
     } else if (Mode == 0) {
       Serial.println("Umidificatore spento.");
       display.clearDisplay();
       display.setCursor(0, 0);
-      display.println("Umidificatore Spento.");
+      display.setTextSize(2);
+      display.println("Umidificatore");
+      display.println("spento");
+      display.setTextSize(1);
       display.display();
       mqtt.publish(MODALITA, "Spento");
     }
 
-    digitalWrite(RED,LOW);
     atomizza(LOW);
 }
 
@@ -200,7 +208,6 @@ void rotary_loop() {
     mqtt.publish(INTERMIT_TIME, timeStr);
 
     // ogni volta che cambio il delay spengo l'atomizzazione
-    digitalWrite(RED,LOW);
     atomizza(LOW);
   }
 }
@@ -264,12 +271,12 @@ void waterLevel() {
     waterLevelValue *= 0.2;
   }
 
-  Serial.print("The water sensor value: ");
-  Serial.println(waterLevelValue);
+  /*Serial.print("The water sensor value: ");
+  Serial.println(waterLevelValue);*/
 
   waterLevelY = map(waterLevelValue, WATER_NIL, WATER_MAX, 0, 128);
-  Serial.print("Water level: ");
-  Serial.println(waterLevelY);
+  /*Serial.print("Water level: ");
+  Serial.println(waterLevelY);*/
 
   checkWaterLevelSensor.setCallback(&activateWaterSensorPower);
 }
@@ -284,7 +291,10 @@ void displaySensors() {
   if (waterLevelY <= NEED_WATER) {
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.print("Aggiungere acqua");
+    display.setTextSize(2);
+    display.println("Aggiungere");
+    display.println("Acqua");
+    display.setTextSize(1);
     display.display();
     return;
   }
@@ -327,6 +337,10 @@ void displaySensors() {
 void printSensors() {
   if (Mode == 0)
     return;
+
+  if (waterLevelY <= NEED_WATER) {
+    Serial.println("Aggiungere acqua.");
+  }
 
   // DHT11
   Serial.print(F("Humidity: "));
@@ -388,9 +402,11 @@ void atomizza (int state) {
  * gestione atomizzatore in base alla modalità e al livello del'acqua
 */
 void atomize() {
+  if (Mode == 0)
+    return;
+  
   if (waterLevelY <= NEED_WATER) {
-    Serial.println("Livello acqua troppo basso (waterLevelY).");
-    digitalWrite(RED, LOW);
+    // Serial.println("Livello acqua troppo basso (waterLevelY) per atomizzare.");
     atomizza(LOW);
     return;
   }
@@ -462,7 +478,8 @@ void setup() {
   // atomizer setup
   pinMode(RED,OUTPUT);
   pinMode(ATOMIZER_EN,OUTPUT);
-  digitalWrite(ATOMIZER_EN,atomizerState);
+  atomizza(atomizerState);
+  Serial.println("Umidificatore spento.");
   
   // Oled setup
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -470,9 +487,11 @@ void setup() {
   }
   delay(2000);
   display.clearDisplay();
-  display.setTextSize(1);
   display.setTextColor(WHITE);
-  display.print("Umidificatore spento.");
+  display.setTextSize(2);
+  display.println("Umidificatore");
+  display.println("spento");
+  display.setTextSize(1);
   display.display();
 
   // adding/enabling tasks
