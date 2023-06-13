@@ -1,10 +1,6 @@
 /*
   TODO: migliorare la modalità spento, ora non è una vera modalità spenta, nel senso che continua a fare i task
         soluzione: si dovrebbe spegnere proprio l'alimentazione, oppure abilitare/disabilitare dinamicamente i task
-  TODO: water level sensor
-        --> migliorare la normalizzazione dei valori
-        --> migliorare la calibrazione
-  TODO: migliorare il treshold del "manca acqua"
   TODO: accettare dei comandi da MQTT???????
   TODO: breadboard power supply + 9V battery
 */
@@ -34,7 +30,7 @@ WiFiClient espClient;
 PubSubClient client(MQTT_SERVER, 1883, espClient);
 PubSubClientTools mqtt(client);
 
-// topic mqtt
+// topic (publish) mqtt
 String ID = "UmidificatoreSmartCass";
 const char *DHT11_TEMP = "UmidificatoreSmartCass/dht11/temperature";
 const char *DHT11_HUM = "UmidificatoreSmartCass/dht11/humidity";
@@ -53,8 +49,9 @@ const char *INTERMIT_TIME = "UmidificatoreSmartCass/intermitTime";
 #define WATER_NIL 0                     // valore del water sensor non in acqua
 #define WATER_MIN 205                   // valore del water sensor con acqua minima
 #define WATER_MID 260                   // valore del water sensor con acqua a metà
-#define WATER_MAX 275                   // valore del water sensor completamente immerso
-#define ATOMIZER_EN 14                  // pin per abilitare l'atomizzatore
+#define WATER_MAX 310                   // valore del water sensor completamente immerso
+#define NEED_WATER 35
+#define ATOMIZER_EN 4                   // pin per abilitare l'atomizzatore
 #define ROTARY_ENCODER_A_PIN 33         // clk pin
 #define ROTARY_ENCODER_B_PIN 25         // dt pin
 #define ROTARY_ENCODER_BUTTON_PIN 26    // button pin
@@ -74,9 +71,9 @@ int Mode = 0;                                 // modalità dell'umidificatore
 float temp = 0;                               // temperatura corrente
 float hum = 0;                                // umidità corrente
 float hic = 0;                                // heat index corrente
-float temp_treshold = 24.0;
+float hum_treshold = 70;
 unsigned long previousMillis = 0;
-unsigned long millisIntermittenza = 30000;    // delay di atomizzazione
+unsigned long millisIntermittenza = 5000;    // delay di atomizzazione
 unsigned long seconds;
 unsigned long minutes;
 int waterLevelValue;                          // valore ottenuto dal water leve sensor compreso tra [WATER_MIN,WATER_MAX]
@@ -142,25 +139,25 @@ void rotary_loop() {
       return;
     }
   
-    if (encoderDelta > 0) {
-      temp_treshold = temp_treshold + 0.1;
-    } else {
-      temp_treshold = temp_treshold - 0.1;
+    if (encoderDelta > 0 && hum_treshold < 100) {
+      hum_treshold = hum_treshold + 5;
+    } else if (encoderDelta < 0 && hum_treshold >= 5) {
+      hum_treshold = hum_treshold - 5;
     }
 
-    Serial.print("New Temperature treshold: ");
-    Serial.print(temp_treshold);
-    Serial.println(F("°C"));
+    Serial.print("New Humidity treshold: ");
+    Serial.print(hum_treshold);
+    Serial.println(F("%"));
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.println("New temp treshold: ");
+    display.println("New hum treshold: ");
     display.println();
     display.setTextSize(2);
-    display.print(temp_treshold);
-    display.println(F("C"));
+    display.print(hum_treshold);
+    display.println(F("%"));
     display.setTextSize(1);
     display.display();
-    mqtt.publish(TRESHOLD, String(temp_treshold).c_str());
+    mqtt.publish(TRESHOLD, String(hum_treshold).c_str());
   } else if (Mode == 2) {
     encoderDelta = rotaryEncoder.encoderChanged();
     if (encoderDelta == 0) {
@@ -171,7 +168,7 @@ void rotary_loop() {
     if (encoderDelta > 0) {
       millisIntermittenza = millisIntermittenza + 15000;
     } else {
-      if (millisIntermittenza > 0)
+      if (millisIntermittenza >= 15000)
         millisIntermittenza = millisIntermittenza - 15000;
     }
 
@@ -213,10 +210,10 @@ void IRAM_ATTR readEncoderISR() {
 }
 
 // TASKS
-Task checkDHT11Sensors(13 * TASK_SECOND, TASK_FOREVER, &dht11Sensors);
-Task checkWaterLevelSensor(13 * TASK_SECOND, TASK_FOREVER, &activateWaterSensorPower);
-Task printSensorsValues(15 * TASK_SECOND, TASK_FOREVER, &printSensors);
-Task printDisplaySensors(15 * TASK_SECOND, TASK_FOREVER, &displaySensors);
+Task checkDHT11Sensors(4 * TASK_SECOND, TASK_FOREVER, &dht11Sensors);
+Task checkWaterLevelSensor(3 * TASK_SECOND, TASK_FOREVER, &activateWaterSensorPower);
+Task printSensorsValues(5 * TASK_SECOND, TASK_FOREVER, &printSensors);
+Task printDisplaySensors(5 * TASK_SECOND, TASK_FOREVER, &displaySensors);
 Task atomizer(TASK_IMMEDIATE, TASK_FOREVER, &atomize);
 
 /*
@@ -283,6 +280,14 @@ void waterLevel() {
 void displaySensors() {
   if (Mode == 0)
     return;
+
+  if (waterLevelY <= NEED_WATER) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Aggiungere acqua");
+    display.display();
+    return;
+  }
   
   display.clearDisplay();
   display.setCursor(0, 0);
@@ -300,9 +305,9 @@ void displaySensors() {
   display.println();
 
   if (Mode == 1) {
-    display.print(F("Temp treshold: "));
-    display.print(temp_treshold);
-    display.println(F("C"));
+    display.print(F("Hum treshold: "));
+    display.print(hum_treshold);
+    display.println(F("%"));
     display.println();
   } else {
     display.print("Intermit time: ");
@@ -332,9 +337,9 @@ void printSensors() {
   Serial.print(F("  Heat Index: "));
   Serial.print(hic);
   Serial.println(F("°C"));
-  Serial.print(F("Temperature treshold: "));
-  Serial.print(temp_treshold);
-  Serial.println(F("°C"));
+  Serial.print(F("Humidity treshold: "));
+  Serial.print(hum_treshold);
+  Serial.println(F("%"));
 
   // water level sensor
   Serial.print("Water level: ");
@@ -383,15 +388,15 @@ void atomizza (int state) {
  * gestione atomizzatore in base alla modalità e al livello del'acqua
 */
 void atomize() {
-  /*if (waterLevelY <= 40) {
+  if (waterLevelY <= NEED_WATER) {
     Serial.println("Livello acqua troppo basso (waterLevelY).");
     digitalWrite(RED, LOW);
-    digitalWrite(ATOMIZER_EN, LOW);
+    atomizza(LOW);
     return;
-  }*/
+  }
   
   if (Mode == 1) {    
-    if (temp >= temp_treshold) {
+    if (hum < hum_treshold) {
       atomizza(HIGH);
     } else {
       atomizza(LOW);
@@ -457,7 +462,7 @@ void setup() {
   // atomizer setup
   pinMode(RED,OUTPUT);
   pinMode(ATOMIZER_EN,OUTPUT);
-  digitalWrite(ATOMIZER_EN,atomizerState); 
+  digitalWrite(ATOMIZER_EN,atomizerState);
   
   // Oled setup
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
