@@ -1,11 +1,4 @@
 /*
-  TODO: migliorare la modalità spento, ora non è una vera modalità spenta, nel senso che continua a fare i task
-        soluzione: si dovrebbe spegnere proprio l'alimentazione, oppure abilitare/disabilitare dinamicamente i task
-  TODO: accettare dei comandi da MQTT???????
-  TODO: breadboard power supply + 9V battery
-*/
-
-/*
  * Autore:   Davide Carniselli
  * Github:   https://github.com/GitCass01
  * Progetto: Umidificatore Smart
@@ -71,12 +64,12 @@ int Mode = 0;                                 // modalità dell'umidificatore
 float temp = 0;                               // temperatura corrente
 float hum = 0;                                // umidità corrente
 float hic = 0;                                // heat index corrente
-float hum_treshold = 70;
+float hum_treshold = 70;                      // threshold per atomizzatore
 unsigned long previousMillis = 0;
 unsigned long millisIntermittenza = 30000;    // delay di atomizzazione
 unsigned long seconds;
 unsigned long minutes;
-int waterLevelValue;                          // valore ottenuto dal water leve sensor compreso tra [WATER_MIN,WATER_MAX]
+int waterLevelValue;                          // valore ottenuto dal water level sensor compreso tra [WATER_MIN,WATER_MAX]
 int waterLevelY;                              // valore tra 0 e 127, ottenuto normalizzando waterLevelValue
 int atomizerState = LOW;                      // stato dell'atomizzatore corrente
 
@@ -93,32 +86,32 @@ void rotary_onButtonClick() {
     // gestione cambio modalità umdificatore
     Mode = (Mode+1) % 3;
     if (Mode == 1) {
-      Serial.println("Modalità Automatica.");
+      Serial.println(F("Modalità Automatica."));
       display.clearDisplay();
       display.setCursor(0, 0);
       display.setTextSize(2);
-      display.println("Modalita'");
-      display.println("Automatica");
+      display.println(F("Modalita'"));
+      display.println(F("Automatica"));
       display.setTextSize(1);
       display.display();
       mqtt.publish(MODALITA, "Automatico");
     } else if (Mode == 2) {
       mqtt.publish(MODALITA, "Intermittenza");
-      Serial.println("Modalita' Intermittenza.");
+      Serial.println(F("Modalita' Intermittenza."));
       display.clearDisplay();
       display.setCursor(0, 0);
       display.setTextSize(2);
-      display.println("Modalita'");
-      display.println("Intermittenza");
+      display.println(F("Modalita'"));
+      display.println(F("Intermittenza"));
       display.setTextSize(1);
       display.display();
     } else if (Mode == 0) {
-      Serial.println("Umidificatore spento.");
+      Serial.println(F("Umidificatore spento."));
       display.clearDisplay();
       display.setCursor(0, 0);
       display.setTextSize(2);
-      display.println("Umidificatore");
-      display.println("spento");
+      display.println(F("Umidificatore"));
+      display.println(F("spento"));
       display.setTextSize(1);
       display.display();
       mqtt.publish(MODALITA, "Spento");
@@ -138,7 +131,7 @@ void rotary_loop() {
   int encoderDelta;
 
   /* 
-   *  se la modalità corrente è automatica, allora la rotazione modifica il treshold
+   *  se la modalità corrente è automatica, allora la rotazione modifica il threshold
    *  altrimenti, se la modalità è ad intermittenza, modifica il delay dell'atomizzazione
   */
   if (Mode == 1) {
@@ -153,12 +146,12 @@ void rotary_loop() {
       hum_treshold = hum_treshold - 5;
     }
 
-    Serial.print("New Humidity treshold: ");
+    Serial.print(F("New Humidity treshold: "));
     Serial.print(hum_treshold);
     Serial.println(F("%"));
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.println("New hum treshold: ");
+    display.println(F("New hum treshold: "));
     display.println();
     display.setTextSize(2);
     display.print(hum_treshold);
@@ -185,18 +178,18 @@ void rotary_loop() {
     minutes = (millisIntermittenza / 1000) / 60;
     seconds %= 60;
     minutes %= 60;
-    Serial.print("New intermit time (mm:ss): ");
+    Serial.print(F("New intermit time (mm:ss): "));
     Serial.print(minutes);
-    Serial.print(":");
+    Serial.print(F(":"));
     Serial.println(seconds);
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.println("New intermit time:");
+    display.println(F("New intermit time:"));
     display.println();
-    display.print("(mm:ss) ");
+    display.print(F("(mm:ss) "));
     display.setTextSize(2);
     display.print(minutes);
-    display.print(":");
+    display.print(F(":"));
     display.println(seconds);
     display.setTextSize(1);
     display.display(); 
@@ -264,7 +257,8 @@ void waterLevel() {
   waterLevelValue = analogRead(waterSensorOutput);
   digitalWrite(waterSensorPower, LOW);
 
-  // calcoli ottenuti dopo una calibrazione iniziale
+  // calcoli ottenuti dopo una calibrazione iniziale (con acqua di rubinetto di casa)
+  // in base alla conduttività dell'acqua bisogna ricalibrare il sensore
   if (waterLevelValue <= WATER_MID) {
     waterLevelValue *= 0.6;
   } else if (waterLevelValue <= WATER_MIN) {
@@ -320,7 +314,7 @@ void displaySensors() {
     display.println(F("%"));
     display.println();
   } else {
-    display.print("Intermit time: ");
+    display.print(F("Intermit time: "));
     display.print(minutes);
     display.print(":");
     display.println(seconds);
@@ -339,7 +333,7 @@ void printSensors() {
     return;
 
   if (waterLevelY <= NEED_WATER) {
-    Serial.println("Aggiungere acqua.");
+    Serial.println(F("Aggiungere acqua."));
   }
 
   // DHT11
@@ -356,7 +350,7 @@ void printSensors() {
   Serial.println(F("%"));
 
   // water level sensor
-  Serial.print("Water level: ");
+  Serial.print(F("Water level: "));
   Serial.println(waterLevelY);
 
   // invio mqtt
@@ -429,14 +423,22 @@ void setupWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), pass.c_str());
 
-  Serial.print("Connecting...");
+  Serial.print(F("Connecting..."));
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextColor(WHITE);
+  display.setTextSize(2);
+  display.println(F("Connecting "));
+  display.println(F("to wifi..."));
+  display.display();
+  
   while (WiFi.status() != WL_CONNECTED) {
       delay(500);
-      Serial.print(".");
+      Serial.print(F("."));
   }
   Serial.println();
 
-  Serial.print("Connected, IP address: ");
+  Serial.print(F("Connected, IP address: "));
   Serial.println(WiFi.localIP());
 }
 
@@ -447,7 +449,7 @@ void setupMQTT() {
   // Connect to MQTT
   Serial.print("Connecting to MQTT: "+String(MQTT_SERVER)+" ... ");
   if (client.connect(ID.c_str())) {
-      Serial.println("connected");
+      Serial.println(F("connected"));
       mqtt.publish(MODALITA, "Spento");
   } else {
       Serial.println("Failed, rc="+client.state());
@@ -460,6 +462,12 @@ void setupMQTT() {
 void setup() {
   Serial.begin(115200);
 
+  // Oled setup
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+  }
+
+  // setup wifi + mqtt
   setupWifi();
   setupMQTT();
 
@@ -479,18 +487,13 @@ void setup() {
   pinMode(RED,OUTPUT);
   pinMode(ATOMIZER_EN,OUTPUT);
   atomizza(atomizerState);
-  Serial.println("Umidificatore spento.");
+  Serial.println(F("Umidificatore spento."));
   
-  // Oled setup
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-  }
-  delay(2000);
+  // Oled display umidificatore spento
   display.clearDisplay();
-  display.setTextColor(WHITE);
-  display.setTextSize(2);
-  display.println("Umidificatore");
-  display.println("spento");
+  display.setCursor(0, 0);
+  display.println(F("Umidificatore"));
+  display.println(F("spento"));
   display.setTextSize(1);
   display.display();
 
