@@ -448,6 +448,7 @@ void setupWifi() {
 void setupMQTT() {
   // Connect to MQTT
   Serial.print("Connecting to MQTT: "+String(MQTT_SERVER)+" ... ");
+  // se necessita di username e password (da settare in Credentials.h) usare --> client.connect(ID.c_str(), MQTT_USER, MQTT_PSW)
   if (client.connect(ID.c_str())) {
       Serial.println(F("connected"));
       mqtt.publish(MODALITA, "Spento");
