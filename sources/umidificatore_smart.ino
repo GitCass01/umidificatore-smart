@@ -486,7 +486,8 @@ void setup() {
   // atomizer setup
   pinMode(RED,OUTPUT);
   pinMode(ATOMIZER_EN,OUTPUT);
-  atomizza(atomizerState);
+  atomizerState = LOW;
+  digitalWrite(ATOMIZER_EN, atomizerState);
   Serial.println(F("Umidificatore spento."));
   
   // Oled display umidificatore spento
