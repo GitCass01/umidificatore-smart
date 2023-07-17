@@ -1,9 +1,9 @@
-# umidificatore-smart
-**Umidificatore Smart**
+# Umidificatore Smart
 
 **Autori**: Davide Carniselli
 
-**Descrizione**: Umidificatore Smart, con due modalità di funzionamento: *intermittenza* e *automatica*.
+## Descrizione
+Umidificatore Smart, con due modalità di funzionamento: *intermittenza* e *automatica*.
 
 Nella modalità ad intermizzenta, l'umidificatore atomizzerà l'acqua presente nel *serbatoio* con un ritmo costante, nella modalità automatica l'umidificatore si servirà di vari sensori di *temperatura* e di *umidità* per acquisire dati dall'ambiente e atomizzare l'acqua solo quando necessario.
 
@@ -13,8 +13,21 @@ Sarà presente un *display oled* sul quale verranno visualizzate le varie inform
 
 Le varie informazioni che si andranno a generare saranno anche riportate in MQTT.
 
-**Link a repo**: https://github.com/GitCass01/umidificatore-smart
+## Lista Materiali
+- esp32
+- potenziometro
+- led
+- oled (128x64)
+- dht11
+- water level sensor
+- atomizzatore acqua (es. [grove](https://wiki.seeedstudio.com/Grove-Water_Atomization/))
+- contenitore per acqua
 
-**Licenza scelta**: GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
+## Schema breadboard
+![Schema BreadBoard](fritzing/Umidificatore_Smart_bb.png)
 
-**Data *indicativa* di presentazione**: fine Giugno
+## Schema Elettrico
+![Schema Elettrico](fritzing/Umidificatore_Smart_schem.pdf)
+
+## Licenza scelta
+GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
