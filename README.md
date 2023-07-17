@@ -27,7 +27,7 @@ Le varie informazioni che si andranno a generare saranno anche riportate in MQTT
 ![Schema BreadBoard](fritzing/Umidificatore_Smart_bb.png)
 
 ## Schema Elettrico
-![Schema Elettrico](fritzing/Umidificatore_Smart_schem.pdf)
+![Schema Elettrico](fritzing/Umidificatore_Smart_schem.png)
 
 ## Licenza scelta
 GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
