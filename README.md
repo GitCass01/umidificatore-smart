@@ -1,6 +1,6 @@
 # Umidificatore Smart
 
-**Autori**: Davide Carniselli
+**Autore**: Davide Carniselli
 
 ## Descrizione
 Umidificatore Smart, con due modalità di funzionamento: *intermittenza* e *automatica*.
